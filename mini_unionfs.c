@@ -600,6 +600,36 @@ static int unionfs_mkdir(const char *path, mode_t mode) {
 }
 
 /*
+ * Helper: Remove all whiteout files from a directory in upper layer
+ * This is needed when rmdir is called on a directory that only contains whiteouts
+ */
+static int remove_whiteouts_in_dir(const char *upper_dir_path) {
+    DIR *dp;
+    struct dirent *de;
+    char file_path[PATH_MAX];
+    
+    dp = opendir(upper_dir_path);
+    if (dp == NULL) {
+        return 0;  /* Directory doesn't exist, that's fine */
+    }
+    
+    while ((de = readdir(dp)) != NULL) {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+            continue;
+        }
+        
+        /* Only remove whiteout files */
+        if (is_whiteout_file(de->d_name)) {
+            snprintf(file_path, sizeof(file_path), "%s/%s", upper_dir_path, de->d_name);
+            unlink(file_path);
+        }
+    }
+    
+    closedir(dp);
+    return 0;
+}
+
+/*
  * FUSE operation: rmdir - remove a directory
  */
 static int unionfs_rmdir(const char *path) {
@@ -621,6 +651,9 @@ static int unionfs_rmdir(const char *path) {
     get_lower_path(path, lower_path, sizeof(lower_path));
     
     if (loc == PATH_UPPER) {
+        /* Remove any whiteout files inside this directory first */
+        remove_whiteouts_in_dir(upper_path);
+        
         /* Directory exists in upper - remove it */
         res = rmdir(upper_path);
         if (res != 0) {
